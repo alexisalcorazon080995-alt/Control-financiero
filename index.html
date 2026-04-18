@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Control Uber EMPRESARIAL PRO</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs/dist/exceljs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/file-saver/dist/FileSaver.min.js"></script>
+
+<style>
+body { font-family: Arial; background:#0f1117; color:white; padding:15px;}
+h2{text-align:center;}
+.card{background:#1a1d25; padding:15px; margin-top:10px; border-radius:10px;}
+input,select,button{width:100%;margin-top:8px;padding:10px;border-radius:8px;border:none;}
+button{background:#00d084;color:black;font-weight:bold;}
+.eliminar{background:red;color:white;margin-top:5px;}
+canvas{margin-top:10px;}
+</style>
+</head>
+
+<body>
+
+<h2>🚗 Control Uber EMPRESARIAL PRO</h2>
+
+<div class="card">
+<h3 id="balance"></h3>
+<p id="ingresos"></p>
+<p id="gastos"></p>
+</div>
+
+<div class="card">
+<h3>📅 Resumen Semanal</h3>
+<p id="semanaIngresos"></p>
+<p id="semanaGastos"></p>
+<h3 id="semanaGanancia"></h3>
+</div>
+
+<div class="card">
+<h3>📆 Resumen Mensual</h3>
+
+<select id="selectorMes" onchange="cambiarMes()"></select>
+<div id="comparacionMes" style="margin-top:10px;"></div>
+
+<p id="mesIngresos"></p>
+<p id="mesGastos"></p>
+<h3 id="mesGanancia"></h3>
+</div>
+
+<div class="card">
+<h3>Registrar Movimiento</h3>
+
+<select id="tipo">
+<option value="ingreso">Ingreso</option>
+<option value="egreso">Gasto</option>
+</select>
+
+<input id="monto" type="number" placeholder="Monto S/">
+
+<select id="categoria">
+<option value="uber">Uber trabajo</option>
+<option value="bono">Bono</option>
+<option value="propina">Propina</option>
+<option value="gasolina">Gasolina</option>
+<option value="mantenimiento">Mantenimiento</option>
+<option value="comida">Comida</option>
+<option value="auto">Auto</option>
+<option value="ropa">Ropa</option>
+<option value="cuentas">Cuentas</option>
+<option value="extra">Extra</option>
+</select>
+
+<input id="detalle" placeholder="Detalle">
+
+<button onclick="agregar()">Guardar</button>
+</div>
+
+<div class="card">
+<h3>📊 Gráficos</h3>
+<canvas id="grafico1"></canvas>
+<canvas id="grafico2"></canvas>
+</div>
+
+<div class="card">
+<button onclick="exportar()">📥 Exportar Excel PRO</button>
+</div>
+
+<div class="card">
+<h3>Historial</h3>
+<div id="lista"></div>
+</div>
+
+<script>
+
+let data = JSON.parse(localStorage.getItem("finanzasPro")) || [];
+let chart1, chart2;
+let mesSeleccionado = null;
+
+function generarID(){
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return Date.now() + Math.random();
+}
+
+function guardar(){
+  localStorage.setItem("finanzasPro", JSON.stringify(data));
+}
+
+function agregar(){
+  const tipo=document.getElementById("tipo").value;
+  const monto=parseFloat(document.getElementById("monto").value);
+  const categoria=document.getElementById("categoria").value;
+  const detalle=document.getElementById("detalle").value;
+
+  if(!monto) return;
+
+  data.unshift({
+    id: generarID(),
+    fecha:new Date().toISOString(),
+    tipo,
+    monto,
+    categoria,
+    detalle
+  });
+
+  guardar();
+  render();
+}
+
+function eliminar(id){
+  if(confirm("¿Seguro que quieres eliminar este registro?")){
+    data = data.filter(t => t.id !== id);
+    guardar();
+    render();
+  }
+}
+
+// ===== NUEVO =====
+function llenarSelectorMes(){
+  const selector = document.getElementById("selectorMes");
+  let mesesUnicos = {};
+
+  data.forEach(t=>{
+    const f = new Date(t.fecha);
+    const key = f.getFullYear() + "-" + f.getMonth();
+    mesesUnicos[key] = f;
+  });
+
+  selector.innerHTML = "";
+
+  Object.values(mesesUnicos).sort((a,b)=>b-a).forEach(f=>{
+    const opcion = document.createElement("option");
+    opcion.value = f.getFullYear()+"-"+f.getMonth();
+    opcion.text = f.toLocaleString("es-ES",{month:"long",year:"numeric"});
+    selector.appendChild(opcion);
+  });
+
+  if(!mesSeleccionado && selector.value){
+    mesSeleccionado = selector.value;
+  }
+
+  selector.value = mesSeleccionado;
+}
+
+function cambiarMes(){
+  mesSeleccionado = document.getElementById("selectorMes").value;
+  render();
+}
+
+function obtenerMesData(){
+  if(!mesSeleccionado) return data;
+
+  const [año, mes] = mesSeleccionado.split("-").map(Number);
+
+  return data.filter(t=>{
+    const f = new Date(t.fecha);
+    return f.getFullYear()===año && f.getMonth()===mes;
+  });
+}
+
+// ===== RENDER =====
+function render(){
+
+llenarSelectorMes();
+let datosFiltrados = obtenerMesData();
+
+let ingresos=0,gastos=0;
+let ingresosSemana=0,gastosSemana=0;
+let ingresosMes=0,gastosMes=0;
+let categorias={};
+
+const hoy=new Date();
+const inicioSemana=new Date(hoy);
+inicioSemana.setDate(hoy.getDate()-hoy.getDay());
+inicioSemana.setHours(0,0,0,0);
+
+const lista=document.getElementById("lista");
+lista.innerHTML="";
+
+datosFiltrados.forEach(t=>{
+const fecha=new Date(t.fecha);
+
+if(t.tipo==="ingreso") ingresos+=t.monto;
+else gastos+=t.monto;
+
+if(fecha>=inicioSemana){
+if(t.tipo==="ingreso") ingresosSemana+=t.monto;
+else gastosSemana+=t.monto;
+}
+
+if(t.tipo==="ingreso") ingresosMes+=t.monto;
+else gastosMes+=t.monto;
+
+if(t.tipo==="egreso"){
+if(!categorias[t.categoria]) categorias[t.categoria]=0;
+categorias[t.categoria]+=t.monto;
+}
+
+lista.innerHTML+=`
+<div>
+<p>${fecha.toLocaleDateString()} - ${t.categoria} - ${t.detalle || ""} - S/ ${t.monto}</p>
+<button class="eliminar" onclick="eliminar('${t.id}')">Eliminar</button>
+</div>
+`;
+});
+
+const ganancia=ingresos-gastos;
+const gananciaSemana=ingresosSemana-gastosSemana;
+const gananciaMes=ingresosMes-gastosMes;
+
+document.getElementById("balance").innerText="Ganancia neta: S/ "+ganancia;
+document.getElementById("ingresos").innerText="Ingresos: S/ "+ingresos;
+document.getElementById("gastos").innerText="Gastos: S/ "+gastos;
+
+document.getElementById("semanaIngresos").innerText="Ingresos semana: S/ "+ingresosSemana;
+document.getElementById("semanaGastos").innerText="Gastos semana: S/ "+gastosSemana;
+document.getElementById("semanaGanancia").innerText="Ganancia semana: S/ "+gananciaSemana;
+
+document.getElementById("mesIngresos").innerText="Ingresos mes: S/ "+ingresosMes;
+document.getElementById("mesGastos").innerText="Gastos mes: S/ "+gastosMes;
+document.getElementById("mesGanancia").innerText="Ganancia mes: S/ "+gananciaMes;
+
+// gráficos
+if(chart1) chart1.destroy();
+chart1=new Chart(document.getElementById("grafico1"),{
+type:"doughnut",
+data:{labels:["Ingresos","Gastos"],datasets:[{data:[ingresos,gastos]}]}
+});
+
+if(chart2) chart2.destroy();
+chart2=new Chart(document.getElementById("grafico2"),{
+type:"bar",
+data:{
+labels:Object.keys(categorias),
+datasets:[{label:"Gastos",data:Object.values(categorias)}]
+}
+});
+
+// ===== COMPARACIÓN =====
+let comparacion = "";
+let meses = {};
+
+data.forEach(t=>{
+  const f = new Date(t.fecha);
+  const key = f.getFullYear()+"-"+f.getMonth();
+
+  if(!meses[key]) meses[key]=0;
+
+  if(t.tipo==="ingreso") meses[key]+=t.monto;
+  else meses[key]-=t.monto;
+});
+
+let orden = Object.entries(meses).sort((a,b)=>b[1]-a[1]);
+
+if(orden.length>1){
+  const mejor = orden[0];
+  const peor = orden[orden.length-1];
+
+  comparacion = `
+  📈 Mejor mes: ${mejor[0]} → S/ ${mejor[1]}<br>
+  📉 Peor mes: ${peor[0]} → S/ ${peor[1]}
+  `;
+}
+
+document.getElementById("comparacionMes").innerHTML = comparacion;
+
+}
+
+// ===== EXCEL (SIN TOCAR) =====
+async function exportar(){
+
+const wb = new ExcelJS.Workbook();
+
+const ws = wb.addWorksheet("Resumen", {
+  pageSetup: { paperSize: 9, orientation: 'portrait' }
+});
+
+ws.mergeCells("A1:D1");
+const titulo = ws.getCell("A1");
+titulo.value = "REPORTE FINANCIERO - UBER";
+titulo.font = { size: 18, bold: true };
+titulo.alignment = { horizontal: "center" };
+
+let ingresos=0,gastos=0;
+data.forEach(t=>{
+if(t.tipo==="ingreso") ingresos+=t.monto;
+else gastos+=t.monto;
+});
+const ganancia=ingresos-gastos;
+
+ws.addRow([]);
+ws.addRow(["Concepto","Monto"]);
+ws.addRow(["Ingresos Totales", ingresos]);
+ws.addRow(["Gastos Totales", gastos]);
+ws.addRow(["Ganancia Neta", ganancia]);
+
+ws.getRow(3).eachCell(c=>{
+c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF00D084'}};
+c.font={bold:true};
+});
+
+for(let i=4;i<=6;i++){
+ws.getCell(`B${i}`).numFmt='"S/" #,##0.00';
+}
+
+ws.columns=[{width:25},{width:15}];
+
+const ws2 = wb.addWorksheet("Movimientos");
+
+ws2.columns=[
+{header:"Fecha",key:"f",width:15},
+{header:"Tipo",key:"t",width:10},
+{header:"Categoría",key:"c",width:20},
+{header:"Detalle",key:"d",width:30},
+{header:"Monto",key:"m",width:15}
+];
+
+ws2.getRow(1).eachCell(c=>{
+c.font={bold:true,color:{argb:"FFFFFFFF"}};
+c.fill={type:'pattern',pattern:'solid',fgColor:{argb:"FF1F2937"}};
+});
+
+data.forEach(t=>{
+const row=ws2.addRow({
+f:new Date(t.fecha).toLocaleDateString(),
+t:t.tipo,
+c:t.categoria,
+d:t.detalle||"",
+m:t.monto
+});
+
+row.getCell("m").numFmt='"S/" #,##0.00';
+
+if(t.tipo==="ingreso"){
+row.getCell("m").font={color:{argb:"FF00AA00"}};
+}else{
+row.getCell("m").font={color:{argb:"FFFF0000"}};
+}
+});
+
+const buffer = await wb.xlsx.writeBuffer();
+saveAs(new Blob([buffer]), "REPORTE_EMPRESA_PRO.xlsx");
+
+}
+
+render();
+
+</script>
+
+</body>
+</html>
